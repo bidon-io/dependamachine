@@ -1,0 +1,8 @@
+name: Check PR
+
+on: pull_request
+
+jobs:
+  gitleaks:
+    uses: bidon-io/devops/.github/workflows/shared-gitleaks.yml@master
+    secrets: inherit
