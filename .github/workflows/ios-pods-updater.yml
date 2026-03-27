@@ -1,0 +1,94 @@
+name: "iOS: Pods Updater (reusable)"
+
+on:
+  workflow_call:
+    inputs:
+      config_path:
+        description: "Path to pods-updater-config.json in the calling repo"
+        required: false
+        type: string
+        default: ".github/pods-updater-config.json"
+      base_branch:
+        description: "Base branch for PRs"
+        required: false
+        type: string
+        default: "develop"
+      reviewers:
+        description: "Comma-separated reviewers (users or org/team)"
+        required: false
+        type: string
+        default: ""
+      runner_labels:
+        description: "JSON array of runner labels"
+        required: false
+        type: string
+        default: '["self-hosted", "macOS", "ARM64", "xcode-16"]'
+      ruby_path:
+        description: "Path to ruby binary"
+        required: false
+        type: string
+        default: "/opt/homebrew/opt/ruby@3.2/bin/ruby"
+    secrets:
+      APP_ID:
+        description: "GitHub App ID for token generation"
+        required: true
+      APP_PRIVATE_KEY:
+        description: "GitHub App private key"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.base_branch }}
+
+      - name: Checkout dependamachine scripts
+        uses: actions/checkout@v4
+        with:
+          repository: bidon-io/dependamachine
+          path: .dependamachine
+          sparse-checkout: ios/scripts
+
+      - name: gitconfig
+        run: |
+          git config --global user.name "pods-updater-bot"
+          git config --global user.email "bot@bidon.org"
+          git config --global credential.helper ""
+
+      - name: CocoaPods repo update
+        run: |
+          set -o pipefail
+          GEM_HOME=$(${{ inputs.ruby_path }} -e 'puts Gem.default_dir' 2>/dev/null || ${{ inputs.ruby_path }} -e 'puts Gem.dir')
+          POD_BIN=$(command -v pod || echo "$GEM_HOME/bin/pod")
+          echo "Using POD_BIN=$POD_BIN"
+          "$POD_BIN" --version || true
+          "$POD_BIN" repo update 2>&1 | tee "$RUNNER_TEMP/pod_repo_update.log"
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Run updater
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PODS_UPDATER_TOKEN: ${{ steps.app-token.outputs.token }}
+          PODS_BASE_BRANCH: ${{ inputs.base_branch }}
+          PODS_REVIEWERS: ${{ inputs.reviewers }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+        run: |
+          export GEM_HOME=$(${{ inputs.ruby_path }} -e 'puts Gem.default_dir' 2>/dev/null || true)
+          export POD_BIN=$(command -v pod || echo "$GEM_HOME/bin/pod")
+          echo "Using POD_BIN=$POD_BIN"
+          ${{ inputs.ruby_path }} .dependamachine/ios/scripts/pods_updater.rb --config "$CONFIG_PATH"
