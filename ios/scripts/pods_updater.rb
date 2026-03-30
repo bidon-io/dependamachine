@@ -212,9 +212,9 @@ def pinned_dependency_version(spec, target_pod)
   nil
 end
 
-# For each dependent pod available on public Trunk/CDN, build a set of
-# target_pod versions it supports (by scanning its releases from newest).
-# Returns { dep_name => [sdk_versions] }. Private pods are skipped.
+# For each dependent pod available on public Trunk/CDN, build a map of
+# supported target_pod versions to the latest adapter version that supports them.
+# Returns { dep_name => { sdk_version => adapter_version } }. Private pods are skipped.
 def build_supported_versions_map(target_pod, dependent_pods, current_version)
   map = {}
   cur_v = Gem::Version.new(current_version)
@@ -226,7 +226,7 @@ def build_supported_versions_map(target_pod, dependent_pods, current_version)
       next
     end
 
-    supported = []
+    sdk_to_adapter = {}
     checked = 0
     versions.reverse_each do |ver|
       spec = fetch_podspec_from_cdn(dep, ver)
@@ -236,7 +236,8 @@ def build_supported_versions_map(target_pod, dependent_pods, current_version)
       next unless sdk_ver
       begin
         if Gem::Version.new(sdk_ver) >= cur_v
-          supported << sdk_ver unless supported.include?(sdk_ver)
+          # Keep the latest (first seen) adapter version for each SDK version
+          sdk_to_adapter[sdk_ver] ||= ver
         else
           break # older adapter versions only pin older SDK versions
         end
@@ -247,8 +248,9 @@ def build_supported_versions_map(target_pod, dependent_pods, current_version)
       break if sdk_ver == current_version && checked > 1
     end
 
-    map[dep] = supported
-    puts ">> #{dep} supports #{target_pod}: #{supported.sort_by { |v| Gem::Version.new(v) rescue v }.join(', ')}"
+    map[dep] = sdk_to_adapter
+    supported = sdk_to_adapter.keys.sort_by { |v| Gem::Version.new(v) rescue v }
+    puts ">> #{dep} supports #{target_pod}: #{supported.join(', ')}"
   end
 
   map
@@ -256,20 +258,39 @@ end
 
 # Find the highest candidate version of target_pod that ALL public dependent
 # adapters support. Private pods (not on Trunk) are excluded from constraints.
-# Returns nil if no compatible version found.
+# Returns [version, compat_map] or [nil, compat_map].
 def find_best_compatible_version(target_pod, current_version, candidates, dependent_pods)
-  return candidates.last if dependent_pods.empty?
+  if dependent_pods.empty?
+    return [candidates.last, {}]
+  end
 
   map = build_supported_versions_map(target_pod, dependent_pods, current_version)
-  return candidates.last if map.empty? # no public deps to constrain
+  if map.empty?
+    return [candidates.last, map] # no public deps to constrain
+  end
 
   candidates.sort_by { |v| Gem::Version.new(v) }.reverse_each do |v|
-    if map.all? { |_dep, supported| supported.include?(v) }
-      return v
+    if map.all? { |_dep, sdk_to_adapter| sdk_to_adapter.key?(v) }
+      return [v, map]
     end
   end
 
-  nil
+  [nil, map]
+end
+
+# Update version pins in Podfile for dependent pods that already have exact pins.
+# Uses compat_map from build_supported_versions_map to find the right adapter version.
+def update_dependent_versions_in_podfile(compat_map, target_version)
+  entries = parse_podfile_entries
+  pinned_names = entries.select { |e| exact_version?(e[:version]) }.map { |e| e[:name] }
+
+  compat_map.each do |dep, sdk_to_adapter|
+    next unless pinned_names.include?(dep)
+    adapter_ver = sdk_to_adapter[target_version]
+    next unless adapter_ver
+    replace_pod_version_in_podfile(dep, adapter_ver)
+    puts ">> Updated #{dep} to #{adapter_ver} in Podfile"
+  end
 end
 
 # --- Podfile parsing ---
@@ -523,9 +544,10 @@ def main
 
     # Find dependent pods and the best version compatible with all adapters
     dependent = find_dependent_pods('Podfile.lock', pod, cur)
+    compat_map = {}
     if dependent.any?
       puts "\n>> Dependent adapters for #{pod}: #{dependent.join(', ')}"
-      best = find_best_compatible_version(pod, cur, newer, dependent)
+      best, compat_map = find_best_compatible_version(pod, cur, newer, dependent)
       if best.nil?
         puts ">> Skipping #{pod}: no version compatible with all dependent adapters"
         next
@@ -544,6 +566,8 @@ def main
       sh!("git fetch origin #{default_branch}")
       sh!("git checkout -B #{branch} origin/#{default_branch}")
       replace_pod_version_in_podfile(pod, to_v)
+      # Update version pins for dependent pods that have exact pins in Podfile
+      update_dependent_versions_in_podfile(compat_map, to_v) if compat_map.any?
       pod_bin = ENV['POD_BIN'] || 'pod'
       # Include dependent pods in update so they resolve together
       update_pods = ([pod] + dependent).uniq
