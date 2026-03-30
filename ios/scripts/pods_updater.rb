@@ -580,7 +580,8 @@ def main
       (POD_TO_ADAPTER[adapter_key] || POD_TO_ADAPTER[pod] || []).each do |adapter_name|
         update_adapter_changelog(adapter_name, pod, to_v)
       end
-      sh!("git add Podfile Podfile.lock #{ADAPTERS_DIR}/*/CHANGELOG.md")
+      sh!("git add Podfile Podfile.lock")
+      system("git add #{ADAPTERS_DIR}/*/CHANGELOG.md 2>/dev/null")
       msg = "#{COMMIT_PREFIX} #{pod} #{cur} -> #{to_v}"
       sh!(%{git commit -m "#{msg}"})
       git_push_branch(branch)
