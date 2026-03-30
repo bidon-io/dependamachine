@@ -18,6 +18,7 @@
 require 'json'
 require 'net/http'
 require 'uri'
+require 'digest'
 require 'rubygems/version'
 require 'optparse'
 
@@ -147,6 +148,128 @@ def compute_adapter_version(adapter_name, pod_name, sdk_version_hint)
   base = lock_versions[pod_name] || lock_versions[root] || sdk_version_hint
   rev  = adapter_revision(adapter_name)
   "#{base}.#{rev}"
+end
+
+# --- Reverse dependency lookup ---
+
+# Parse Podfile.lock PODS section and find all root pods that have
+# an exact (= X.Y.Z) dependency on +target_pod+ at version +version+.
+# Returns an array of root pod names (without subspecs).
+def find_dependent_pods(lock_path, target_pod, version)
+  return [] unless File.exist?(lock_path)
+  dependents = []
+  in_pods = false
+  current_root = nil
+  root_pod = target_pod.split('/').first
+
+  File.foreach(lock_path) do |line|
+    if line.start_with?("PODS:")
+      in_pods = true
+      next
+    end
+    break if in_pods && line.match?(/^[A-Z][A-Z ]+:/) && !line.start_with?("PODS:")
+
+    next unless in_pods
+
+    # Root-level pod entry: "  - PodName (version):"
+    if line =~ /^  - ([^\s(]+)\s*\(/
+      current_root = Regexp.last_match(1).split('/').first
+    # Dependency line: "    - OtherPod (= 1.2.3)"
+    elsif line =~ /^    - ([^\s(]+)\s*\(=\s*#{Regexp.escape(version)}\)/
+      dep_name = Regexp.last_match(1).split('/').first
+      if dep_name == root_pod && current_root && current_root != root_pod
+        dependents << current_root unless dependents.include?(current_root)
+      end
+    end
+  end
+  dependents
+end
+
+# --- Compatibility check via CocoaPods CDN ---
+
+# Fetch podspec JSON from the public CocoaPods CDN.
+def fetch_podspec_from_cdn(name, version)
+  hash = Digest::MD5.hexdigest(name)
+  url = "https://cdn.cocoapods.org/Specs/#{hash[0]}/#{hash[1]}/#{hash[2]}/#{name}/#{version}/#{name}.podspec.json"
+  http_get_json(url)
+rescue => e
+  nil
+end
+
+# Extract the exact-pinned version of +target_pod+ from a podspec's dependencies.
+def pinned_dependency_version(spec, target_pod)
+  root = target_pod.split('/').first
+  deps = spec['dependencies'] || {}
+  if deps[root].is_a?(Array)
+    deps[root].each do |constraint|
+      return Regexp.last_match(1).strip if constraint =~ /^=\s*(.+)/
+    end
+  end
+  (spec['subspecs'] || []).each do |sub|
+    v = pinned_dependency_version(sub, target_pod)
+    return v if v
+  end
+  nil
+end
+
+# For each dependent pod available on public Trunk/CDN, build a set of
+# target_pod versions it supports (by scanning its releases from newest).
+# Returns { dep_name => [sdk_versions] }. Private pods are skipped.
+def build_supported_versions_map(target_pod, dependent_pods, current_version)
+  map = {}
+  cur_v = Gem::Version.new(current_version)
+
+  dependent_pods.each do |dep|
+    versions = trunk_versions_for(dep)
+    if versions.empty?
+      puts ">> #{dep}: not on public Trunk, skipping compatibility check"
+      next
+    end
+
+    supported = []
+    checked = 0
+    versions.reverse_each do |ver|
+      spec = fetch_podspec_from_cdn(dep, ver)
+      next unless spec
+      checked += 1
+      sdk_ver = pinned_dependency_version(spec, target_pod)
+      next unless sdk_ver
+      begin
+        if Gem::Version.new(sdk_ver) >= cur_v
+          supported << sdk_ver unless supported.include?(sdk_ver)
+        else
+          break # older adapter versions only pin older SDK versions
+        end
+      rescue ArgumentError
+        next
+      end
+      # Stop after finding a version matching current — we have the full range
+      break if sdk_ver == current_version && checked > 1
+    end
+
+    map[dep] = supported
+    puts ">> #{dep} supports #{target_pod}: #{supported.sort_by { |v| Gem::Version.new(v) rescue v }.join(', ')}"
+  end
+
+  map
+end
+
+# Find the highest candidate version of target_pod that ALL public dependent
+# adapters support. Private pods (not on Trunk) are excluded from constraints.
+# Returns nil if no compatible version found.
+def find_best_compatible_version(target_pod, current_version, candidates, dependent_pods)
+  return candidates.last if dependent_pods.empty?
+
+  map = build_supported_versions_map(target_pod, dependent_pods, current_version)
+  return candidates.last if map.empty? # no public deps to constrain
+
+  candidates.sort_by { |v| Gem::Version.new(v) }.reverse_each do |v|
+    if map.all? { |_dep, supported| supported.include?(v) }
+      return v
+    end
+  end
+
+  nil
 end
 
 # --- Podfile parsing ---
@@ -398,6 +521,21 @@ def main
     newer = all.select { |v| Gem::Version.new(v) > cur_v }
     next if newer.empty?
 
+    # Find dependent pods and the best version compatible with all adapters
+    dependent = find_dependent_pods('Podfile.lock', pod, cur)
+    if dependent.any?
+      puts "\n>> Dependent adapters for #{pod}: #{dependent.join(', ')}"
+      best = find_best_compatible_version(pod, cur, newer, dependent)
+      if best.nil?
+        puts ">> Skipping #{pod}: no version compatible with all dependent adapters"
+        next
+      end
+      if best != newer.last
+        puts ">> Constraining #{pod} to #{best} (latest available: #{newer.last}) for adapter compatibility"
+      end
+      newer = [best]
+    end
+
     newer.each do |to_v|
       puts "\n=============================="
       puts "Processing SDK #{pod} #{cur} -> #{to_v}"
@@ -407,7 +545,12 @@ def main
       sh!("git checkout -B #{branch} origin/#{default_branch}")
       replace_pod_version_in_podfile(pod, to_v)
       pod_bin = ENV['POD_BIN'] || 'pod'
-      sh!("#{pod_bin} update #{pod} --no-repo-update")
+      # Include dependent pods in update so they resolve together
+      update_pods = ([pod] + dependent).uniq
+      if dependent.any?
+        puts ">> Also updating dependent pods: #{dependent.join(', ')}"
+      end
+      sh!("#{pod_bin} update #{update_pods.join(' ')} --no-repo-update")
       # Update adapter changelogs
       adapter_key = pod.split('/').first
       (POD_TO_ADAPTER[adapter_key] || POD_TO_ADAPTER[pod] || []).each do |adapter_name|

@@ -32,7 +32,7 @@ on:
         required: true
       APP_PRIVATE_KEY:
         required: true
-      CLAUDE_API_KEY:
+      ANTHROPIC_API_KEY:
         required: true
 
 permissions:
@@ -97,7 +97,7 @@ jobs:
       - name: Run Claude Code
         uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.CLAUDE_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@claude"
           allowed_bots: ${{ inputs.allowed_bots }}
