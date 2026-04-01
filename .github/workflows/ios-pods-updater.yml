@@ -46,13 +46,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: ${{ inputs.base_branch }}
 
       - name: Checkout dependamachine scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: bidon-io/dependamachine
           path: .dependamachine
