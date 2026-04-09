@@ -106,7 +106,7 @@ jobs:
 
       - name: Get PR info
         id: pr
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -126,7 +126,7 @@ jobs:
       - name: Check labels
         id: labels
         if: steps.pr.outputs.should_run == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -144,7 +144,7 @@ jobs:
       - name: Check CI job statuses
         id: status
         if: steps.pr.outputs.should_run == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -166,7 +166,7 @@ jobs:
       - name: Parse PR metadata
         id: meta
         if: steps.pr.outputs.should_run == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -188,7 +188,7 @@ jobs:
 
       - name: Request team review
         if: steps.pr.outputs.should_run == 'true' && inputs.review_team != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -232,7 +232,7 @@ jobs:
             ios/claude-prompts
 
       - name: Download build output
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -302,7 +302,7 @@ jobs:
 
       - name: Post @claude comment
         if: steps.collect.outputs.has_issues == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -315,7 +315,7 @@ jobs:
             });
 
       - name: Add attempted label
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -359,7 +359,7 @@ jobs:
           sparse-checkout: ios/claude-prompts
 
       - name: Download deprecated warnings
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -421,7 +421,7 @@ jobs:
 
       - name: Post @claude comment
         if: steps.collect.outputs.has_issues == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -435,7 +435,7 @@ jobs:
 
       - name: Add attempted label
         if: steps.collect.outputs.has_issues == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -482,7 +482,7 @@ jobs:
             ios/claude-prompts
 
       - name: Download test failures
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ github.token }}
           script: |
@@ -559,7 +559,7 @@ jobs:
 
       - name: Post @claude comment
         if: steps.collect.outputs.has_issues == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -572,7 +572,7 @@ jobs:
             });
 
       - name: Add attempted label
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -677,7 +677,7 @@ jobs:
 
       - name: Post @claude comment
         if: steps.versions.outputs.has_changes == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
@@ -691,7 +691,7 @@ jobs:
 
       - name: Add changelog label
         if: steps.versions.outputs.has_changes == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app-token.outputs.token }}
           script: |
