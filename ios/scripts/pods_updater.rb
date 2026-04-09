@@ -556,6 +556,8 @@ def main
         puts ">> Constraining #{pod} to #{best} (latest available: #{newer.last}) for adapter compatibility"
       end
       newer = [best]
+    else
+      newer = [newer.last]
     end
 
     newer.each do |to_v|
