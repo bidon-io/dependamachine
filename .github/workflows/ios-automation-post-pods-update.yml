@@ -365,16 +365,22 @@ jobs:
           script: |
             const fs = require('fs');
             const runId = context.payload.workflow_run.id;
+            console.log(`Listing artifacts for run_id: ${runId}`);
             const { data } = await github.rest.actions.listWorkflowRunArtifacts({
               owner: context.repo.owner, repo: context.repo.repo, run_id: runId
             });
+            console.log(`Found ${data.artifacts.length} artifact(s): ${data.artifacts.map(a => a.name).join(', ')}`);
             const artifact = data.artifacts.find(a => a.name === 'deprecated-warnings');
             if (artifact) {
+              console.log(`Downloading artifact id=${artifact.id}`);
               const download = await github.rest.actions.downloadArtifact({
                 owner: context.repo.owner, repo: context.repo.repo,
                 artifact_id: artifact.id, archive_format: 'zip'
               });
               fs.writeFileSync('deprecated-warnings.zip', Buffer.from(download.data));
+              console.log('deprecated-warnings.zip written successfully');
+            } else {
+              console.log('Artifact "deprecated-warnings" not found in this run');
             }
 
       - name: Extract and collect warnings
@@ -428,6 +434,7 @@ jobs:
             });
 
       - name: Add attempted label
+        if: steps.collect.outputs.has_issues == 'true'
         uses: actions/github-script@v7
         with:
           github-token: ${{ steps.app-token.outputs.token }}
