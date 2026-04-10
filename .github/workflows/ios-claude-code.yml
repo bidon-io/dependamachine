@@ -94,6 +94,15 @@ jobs:
           git config user.name "${{ inputs.git_user_name }}"
           git config user.email "${{ inputs.git_user_email }}"
 
+      - name: Debug trigger info
+        run: |
+          echo "Comment author: ${{ github.event.comment.user.login }}"
+          echo "Comment author type: ${{ github.event.comment.user.type }}"
+          echo "Allowed bots: ${{ inputs.allowed_bots }}"
+          echo "Trigger phrase found: ${{ contains(github.event.comment.body, '@claude') }}"
+          echo "PR branch: ${{ steps.pr.outputs.head_ref }}"
+          echo "Model: ${{ inputs.claude_model }}"
+
       - name: Run Claude Code
         uses: anthropics/claude-code-action@v1
         with:
