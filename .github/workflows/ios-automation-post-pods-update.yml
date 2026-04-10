@@ -205,8 +205,7 @@ jobs:
     if: |
       needs.check-state.outputs.should_run == 'true' &&
       needs.check-state.outputs.build_failed == 'true' &&
-      needs.check-state.outputs.build_attempted != 'true' &&
-      needs.check-state.outputs.adapters_json != '[]'
+      needs.check-state.outputs.build_attempted != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App token
@@ -334,8 +333,7 @@ jobs:
       needs.check-state.outputs.should_run == 'true' &&
       needs.check-state.outputs.build_failed != 'true' &&
       needs.check-state.outputs.deprecated_failed == 'true' &&
-      needs.check-state.outputs.deprecated_attempted != 'true' &&
-      needs.check-state.outputs.adapters_json != '[]'
+      needs.check-state.outputs.deprecated_attempted != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App token
@@ -473,8 +471,7 @@ jobs:
       needs.check-state.outputs.build_failed != 'true' &&
       needs.check-state.outputs.deprecated_failed != 'true' &&
       needs.check-state.outputs.tests_failed == 'true' &&
-      needs.check-state.outputs.tests_attempted != 'true' &&
-      needs.check-state.outputs.adapters_json != '[]'
+      needs.check-state.outputs.tests_attempted != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App token
