@@ -124,7 +124,7 @@ jobs:
 
       - name: Upload build output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-output
           path: build/reports/build_output.log
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload deprecated warnings
         if: steps.deprecated.outputs.has_deprecated == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deprecated-warnings
           path: deprecated_warnings.txt
@@ -318,7 +318,7 @@ jobs:
 
       - name: Upload test failures
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-failures
           path: |
