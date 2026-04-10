@@ -524,12 +524,15 @@ jobs:
         run: |
           mkdir -p artifacts
           unzip -o test-failures.zip -d artifacts || true
-          if [ -f "artifacts/build/reports/test_failures.md" ] && [ -s "artifacts/build/reports/test_failures.md" ]; then
-            cp artifacts/build/reports/test_failures.md /tmp/test_errors.md
+          # artifact v4 strips path, files land at artifacts/ directly
+          TEST_FAILURES_MD=$(find artifacts -name "test_failures.md" | head -1)
+          TEST_OUTPUT_LOG=$(find artifacts -name "test_output.log" | head -1)
+          if [ -n "$TEST_FAILURES_MD" ] && [ -s "$TEST_FAILURES_MD" ]; then
+            cp "$TEST_FAILURES_MD" /tmp/test_errors.md
             echo "has_issues=true" >> "$GITHUB_OUTPUT"
-          elif [ -f "artifacts/build/reports/test_output.log" ]; then
+          elif [ -n "$TEST_OUTPUT_LOG" ]; then
             ruby .dependamachine/ios/scripts/collect_adapter_errors_report.rb \
-              --log artifacts/build/reports/test_output.log \
+              --log "$TEST_OUTPUT_LOG" \
               --out /tmp/test_errors.md \
               --adapters-root "$ADAPTERS_ROOT" \
               ${ADAPTER_REGEX:+--adapter-regex "$ADAPTER_REGEX"} \
