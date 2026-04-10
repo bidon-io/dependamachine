@@ -12,10 +12,9 @@ jobs:
   auto-approve:
     runs-on: ubuntu-latest
     steps:
-      - name: Approve and Merge
+      - name: Approve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           gh pr review "$PR_URL" --approve
-          gh pr merge "$PR_URL" --squash --delete-branch
