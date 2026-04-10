@@ -385,12 +385,30 @@ jobs:
 
       - name: Extract and collect warnings
         id: collect
+        env:
+          ADAPTERS_JSON: ${{ needs.check-state.outputs.adapters_json }}
         run: |
           mkdir -p artifacts
           unzip -o deprecated-warnings.zip -d artifacts || true
-          if [ -f "artifacts/deprecated_warnings.txt" ] && [ -s "artifacts/deprecated_warnings.txt" ]; then
+
+          if [ ! -f "artifacts/deprecated_warnings.txt" ]; then
+            echo "has_issues=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Filter warnings to only those from adapters being updated in this PR
+          ADAPTER_PATTERN=$(echo "$ADAPTERS_JSON" | jq -r '.[]' | tr '\n' '|' | sed 's/|$//')
+          if [ -n "$ADAPTER_PATTERN" ]; then
+            grep -E "($ADAPTER_PATTERN)" artifacts/deprecated_warnings.txt > artifacts/filtered_warnings.txt || true
+          else
+            cp artifacts/deprecated_warnings.txt artifacts/filtered_warnings.txt
+          fi
+
+          if [ -s "artifacts/filtered_warnings.txt" ]; then
+            mv artifacts/filtered_warnings.txt artifacts/deprecated_warnings.txt
             echo "has_issues=true" >> "$GITHUB_OUTPUT"
           else
+            echo "No deprecated warnings in adapters being updated (warnings exist in other adapters)"
             echo "has_issues=false" >> "$GITHUB_OUTPUT"
           fi
 
