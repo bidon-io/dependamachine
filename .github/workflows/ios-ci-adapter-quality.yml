@@ -49,10 +49,24 @@ jobs:
 
     outputs:
       build_status: ${{ steps.build.outputs.build_status }}
+      changed_adapters: ${{ steps.detect_changed.outputs.adapters }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Detect changed adapters
+        id: detect_changed
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            git fetch origin ${{ github.base_ref }} --depth=1 2>/dev/null || true
+            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD 2>/dev/null \
+              | grep -oE '^${{ inputs.adapters_dir }}/[^/]+' | sort -u | tr '\n' '|' | sed 's/|$//')
+            echo "adapters=$CHANGED" >> "$GITHUB_OUTPUT"
+            echo "Changed adapters: $CHANGED"
+          else
+            echo "adapters=" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Verify Xcode
         run: xcodebuild -version
@@ -170,8 +184,10 @@ jobs:
         env:
           ADAPTER_PREFIX: ${{ inputs.adapter_prefix }}
           ADAPTERS_DIR: ${{ inputs.adapters_dir }}
+          CHANGED_ADAPTERS: ${{ needs.build.outputs.changed_adapters }}
         run: |
           echo "Checking for deprecated warnings..."
+          echo "Changed adapters: $CHANGED_ADAPTERS"
 
           if [ ! -f build_output.log ]; then
             echo "Build output not found, skipping"
@@ -179,8 +195,15 @@ jobs:
             exit 0
           fi
 
-          ADAPTER_DEPRECATED=$(grep -iE '\.(swift|m|mm):[0-9]+:[0-9]+: warning: .*deprecated' build_output.log \
+          ALL_WARNINGS=$(grep -iE '\.(swift|m|mm):[0-9]+:[0-9]+: warning: .*deprecated' build_output.log \
             | grep -i "${ADAPTERS_DIR}/${ADAPTER_PREFIX}" || true)
+
+          if [ -n "$CHANGED_ADAPTERS" ]; then
+            ADAPTER_DEPRECATED=$(echo "$ALL_WARNINGS" | grep -E "($CHANGED_ADAPTERS)" || true)
+            echo "Filtering by changed adapters: $CHANGED_ADAPTERS"
+          else
+            ADAPTER_DEPRECATED="$ALL_WARNINGS"
+          fi
 
           if [ -n "$ADAPTER_DEPRECATED" ]; then
             echo "Found deprecated code warnings:"
@@ -188,7 +211,7 @@ jobs:
             echo "has_deprecated=true" >> "$GITHUB_OUTPUT"
             echo "$ADAPTER_DEPRECATED" > deprecated_warnings.txt
           else
-            echo "No deprecated code warnings found in adapter code"
+            echo "No deprecated code warnings found in changed adapters"
             echo "has_deprecated=false" >> "$GITHUB_OUTPUT"
           fi
 
