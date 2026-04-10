@@ -59,9 +59,15 @@ jobs:
         id: detect_changed
         run: |
           if [ -n "${{ github.base_ref }}" ]; then
-            git fetch origin ${{ github.base_ref }} --depth=1 2>/dev/null || true
-            CHANGED=$(git diff --name-only origin/${{ github.base_ref }}...HEAD 2>/dev/null \
-              | grep -oE '^${{ inputs.adapters_dir }}/[^/]+' | sort -u | tr '\n' '|' | sed 's/|$//')
+            git fetch origin ${{ github.base_ref }} --depth=100 2>/dev/null || true
+            MERGE_BASE=$(git merge-base origin/${{ github.base_ref }} HEAD 2>/dev/null || true)
+            if [ -n "$MERGE_BASE" ]; then
+              CHANGED=$(git diff --name-only "$MERGE_BASE" HEAD 2>/dev/null \
+                | grep -oE '^${{ inputs.adapters_dir }}/[^/]+' | sort -u | tr '\n' '|' | sed 's/|$//')
+            else
+              CHANGED=$(git diff --name-only origin/${{ github.base_ref }} HEAD 2>/dev/null \
+                | grep -oE '^${{ inputs.adapters_dir }}/[^/]+' | sort -u | tr '\n' '|' | sed 's/|$//')
+            fi
             echo "adapters=$CHANGED" >> "$GITHUB_OUTPUT"
             echo "Changed adapters: $CHANGED"
           else
