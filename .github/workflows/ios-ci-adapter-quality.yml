@@ -313,7 +313,7 @@ jobs:
               -destination "id=$DEST_ID" \
               -derivedDataPath "$DD" \
               -resultBundlePath Result/${{ inputs.test_scheme }}.xcresult \
-              2>&1 | tee build/reports/test_output.log | xcbeautify
+              2>&1 | tee build/reports/test_output.log | xcbeautify || true
           else
             xcodebuild test \
               -workspace ${{ inputs.workspace }} \
@@ -322,7 +322,7 @@ jobs:
               -destination "id=$DEST_ID" \
               -derivedDataPath "$DD" \
               -resultBundlePath Result/${{ inputs.test_scheme }}.xcresult \
-              2>&1 | tee build/reports/test_output.log
+              2>&1 | tee build/reports/test_output.log || true
           fi
 
           # Check actual test results from the log, not xcodebuild exit code.
