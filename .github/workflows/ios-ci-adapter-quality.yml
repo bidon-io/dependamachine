@@ -325,12 +325,17 @@ jobs:
               2>&1 | tee build/reports/test_output.log
           fi
 
-          TEST_EXIT=$?
-          if [ $TEST_EXIT -eq 0 ]; then
-            echo "test_status=success" >> "$GITHUB_OUTPUT"
-          else
+          # Check actual test results from the log, not xcodebuild exit code.
+          # xcodebuild can return non-zero due to simulator/TCC noise even when all tests pass.
+          REAL_FAILURES=$(grep -oE "with [0-9]+ failures" build/reports/test_output.log \
+            | awk '{sum += $2} END {print sum+0}')
+          RUNNER_CRASHED=$(grep -c "Test runner never began executing tests" build/reports/test_output.log || true)
+
+          if [ "${REAL_FAILURES:-0}" -gt 0 ] || [ "${RUNNER_CRASHED:-0}" -gt 0 ]; then
             echo "test_status=failure" >> "$GITHUB_OUTPUT"
-            exit $TEST_EXIT
+            exit 1
+          else
+            echo "test_status=success" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Collect test failures
