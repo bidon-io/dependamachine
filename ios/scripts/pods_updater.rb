@@ -45,8 +45,54 @@ end
 OPTIONS = parse_options
 CONFIG = load_config(OPTIONS[:config])
 
+# --- Pod-to-adapter mapping ---
+
+# Fetch pod-to-adapter mapping from a remote API.
+# The API must return a JSON array where each object has:
+#   'own_dependency_ios'  - CocoaPods pod name
+#   <field>               - adapter pod name (empty if not supported on iOS)
+# +field+ is configurable via 'dependency_field_ios' in config
+#   (defaults to 'appodeal_dependency_ios').
+# Multiple entries with the same pod name are merged into an array.
+def fetch_pod_to_adapter_map_from_api(url, field)
+  puts ">> Fetching pod-to-adapter mapping from #{url} (field: #{field})"
+  data = http_get_json(url)
+  map = {}
+  data.each do |entry|
+    pod     = entry['own_dependency_ios'].to_s.strip
+    adapter = entry[field].to_s.strip
+    next if pod.empty? || adapter.empty?
+    map[pod] ||= []
+    map[pod] << adapter unless map[pod].include?(adapter)
+  end
+  puts ">> Loaded mapping for #{map.size} pods: #{map.keys.join(', ')}"
+  map
+end
+
+def load_pod_to_adapter_map(config)
+  api_url = config['mapping_api_url'].to_s.strip
+  static  = config['pod_to_adapter'] || {}
+
+  return static.freeze if api_url.empty?
+
+  field = config['dependency_field_ios'] || 'appodeal_dependency_ios'
+  map   = fetch_pod_to_adapter_map_from_api(api_url, field)
+
+  # Merge: static entries add or extend API results (additive, not replacing).
+  # Use this for adapters not yet covered by the API (e.g. third-party adapters
+  # for the same SDK: AppLovinMediationBidonAdapter alongside BidonAdapterAppLovin).
+  static.each do |pod, adapters|
+    map[pod] ||= []
+    Array(adapters).each { |a| map[pod] << a unless map[pod].include?(a) }
+  end
+
+  map.freeze
+rescue => e
+  raise "Failed to load pod-to-adapter mapping from API (#{api_url}): #{e}"
+end
+
 # Project-specific settings from config
-POD_TO_ADAPTER    = (CONFIG['pod_to_adapter'] || {}).freeze
+POD_TO_ADAPTER    = load_pod_to_adapter_map(CONFIG)
 ADAPTER_PREFIX    = CONFIG['adapter_prefix'] || 'BidonAdapter'
 ADAPTERS_DIR      = CONFIG['adapters_dir'] || 'Adapters'
 WORKSPACE         = CONFIG['workspace'] || 'BidOn.xcworkspace'
