@@ -45,8 +45,39 @@ end
 OPTIONS = parse_options
 CONFIG = load_config(OPTIONS[:config])
 
+# --- Pod-to-adapter mapping ---
+
+# Fetch pod-to-adapter mapping from a remote API.
+# The API must return a JSON array where each object has:
+#   'own_dependency_ios'       - CocoaPods pod name
+#   'appodeal_dependency_ios'  - Appodeal adapter pod name (empty if not supported on iOS)
+# Multiple entries with the same pod name are merged into an array.
+def fetch_pod_to_adapter_map_from_api(url)
+  puts ">> Fetching pod-to-adapter mapping from #{url}"
+  data = http_get_json(url)
+  map = {}
+  data.each do |entry|
+    pod     = entry['own_dependency_ios'].to_s.strip
+    adapter = entry['appodeal_dependency_ios'].to_s.strip
+    next if pod.empty? || adapter.empty?
+    map[pod] ||= []
+    map[pod] << adapter unless map[pod].include?(adapter)
+  end
+  puts ">> Loaded mapping for #{map.size} pods: #{map.keys.join(', ')}"
+  map.freeze
+end
+
+def load_pod_to_adapter_map(config)
+  api_url = config['mapping_api_url'].to_s.strip
+  return (config['pod_to_adapter'] || {}).freeze if api_url.empty?
+
+  fetch_pod_to_adapter_map_from_api(api_url)
+rescue => e
+  raise "Failed to load pod-to-adapter mapping from API (#{api_url}): #{e}"
+end
+
 # Project-specific settings from config
-POD_TO_ADAPTER    = (CONFIG['pod_to_adapter'] || {}).freeze
+POD_TO_ADAPTER    = load_pod_to_adapter_map(CONFIG)
 ADAPTER_PREFIX    = CONFIG['adapter_prefix'] || 'BidonAdapter'
 ADAPTERS_DIR      = CONFIG['adapters_dir'] || 'Adapters'
 WORKSPACE         = CONFIG['workspace'] || 'BidOn.xcworkspace'
