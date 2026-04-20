@@ -216,12 +216,12 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.check-state.outputs.pr_branch }}
 
       - name: Checkout dependamachine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: bidon-io/dependamachine
           path: .dependamachine
@@ -344,12 +344,12 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.check-state.outputs.pr_branch }}
 
       - name: Checkout dependamachine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: bidon-io/dependamachine
           path: .dependamachine
@@ -482,12 +482,12 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.check-state.outputs.pr_branch }}
 
       - name: Checkout dependamachine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: bidon-io/dependamachine
           path: .dependamachine
@@ -622,13 +622,13 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.check-state.outputs.pr_branch }}
           fetch-depth: 0
 
       - name: Checkout dependamachine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: bidon-io/dependamachine
           path: .dependamachine
