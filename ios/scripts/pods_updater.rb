@@ -24,6 +24,15 @@ require 'optparse'
 
 TRUNK_BASE = 'https://trunk.cocoapods.org/api/v1/pods'
 
+# --- HTTP helpers ---
+
+def http_get_json(url)
+  cmd = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "1", url]
+  body = IO.popen(cmd, &:read)
+  raise "curl failed for #{url}" unless $?.success?
+  JSON.parse(body)
+end
+
 # --- Config loading ---
 
 def load_config(path)
@@ -122,15 +131,6 @@ end
 
 def default_branch
   ENV['PODS_BASE_BRANCH'] || CONFIG['base_branch'] || 'dev'
-end
-
-# --- HTTP helpers ---
-
-def http_get_json(url)
-  cmd = ["curl", "-fsSL", "--retry", "3", "--retry-delay", "1", url]
-  body = IO.popen(cmd, &:read)
-  raise "curl failed for #{url}" unless $?.success?
-  JSON.parse(body)
 end
 
 # --- Version helpers ---
