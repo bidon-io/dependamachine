@@ -330,7 +330,7 @@ jobs:
           # "Test runner never began executing tests after launching" is also simulator flakiness
           # (not a real adapter failure), so we only count explicit test failures.
           REAL_FAILURES=$(grep -oE "with [0-9]+ failures" build/reports/test_output.log \
-            | awk '{sum += $2} END {print sum+0}')
+            | awk '{sum += $2} END {print sum+0}') || true
 
           if [ "${REAL_FAILURES:-0}" -gt 0 ]; then
             echo "test_status=failure" >> "$GITHUB_OUTPUT"
