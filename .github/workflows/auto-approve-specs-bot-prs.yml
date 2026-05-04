@@ -11,6 +11,10 @@ permissions:
 jobs:
   auto-approve:
     runs-on: ubuntu-latest
+    if: |
+      startsWith(github.head_ref, 'feature/') ||
+      startsWith(github.head_ref, 'bugfix/') ||
+      startsWith(github.head_ref, 'claude/')
     steps:
       - name: Approve
         env:
