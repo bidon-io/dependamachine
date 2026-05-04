@@ -53,7 +53,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Detect changed adapters
         id: detect_changed
@@ -260,10 +260,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Checkout dependamachine scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: bidon-io/dependamachine
           path: .dependamachine

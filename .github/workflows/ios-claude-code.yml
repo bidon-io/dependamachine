@@ -78,7 +78,7 @@ jobs:
             core.setOutput('head_ref', pr.head.ref);
 
       - name: Checkout PR branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ steps.pr.outputs.head_ref }}
           token: ${{ steps.app-token.outputs.token }}
