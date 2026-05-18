@@ -243,12 +243,27 @@ rescue => e
 end
 
 # Extract the exact-pinned version of +target_pod+ from a podspec's dependencies.
+# Looks at both top-level "dependencies" and platform-specific blocks
+# (e.g. "ios.dependencies"). CocoaPods treats a constraint with no operator
+# as an exact match, so both "= 6.18.0" and bare "6.18.0" are recognized.
 def pinned_dependency_version(spec, target_pod)
   root = target_pod.split('/').first
-  deps = spec['dependencies'] || {}
-  if deps[root].is_a?(Array)
-    deps[root].each do |constraint|
-      return Regexp.last_match(1).strip if constraint =~ /^=\s*(.+)/
+  dep_blocks = [spec['dependencies']]
+  %w[ios osx tvos watchos visionos macos].each do |platform|
+    pblock = spec[platform]
+    dep_blocks << pblock['dependencies'] if pblock.is_a?(Hash)
+  end
+  dep_blocks.compact.each do |deps|
+    deps.each do |dep_name, constraints|
+      # Match the root pod or any of its subspecs (e.g. AppsFlyerFramework/Strict
+      # → same root version as AppsFlyerFramework).
+      next unless dep_name == root || dep_name.to_s.start_with?("#{root}/")
+      next unless constraints.is_a?(Array)
+      constraints.each do |constraint|
+        if constraint.to_s.strip =~ /\A=?\s*(\d[\w.\-]*)\z/
+          return Regexp.last_match(1)
+        end
+      end
     end
   end
   (spec['subspecs'] || []).each do |sub|
