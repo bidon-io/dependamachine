@@ -304,6 +304,10 @@ end
 
 # Find the highest candidate version of target_pod that ALL public dependent
 # adapters support. Private pods (not on Trunk) are excluded from constraints.
+# Dependents whose podspecs never pin target_pod with an exact (= X.Y.Z)
+# constraint are also excluded: their compatibility cannot be inferred from
+# podspec metadata and treating them as "supports nothing" would block all
+# upgrades (e.g. FBSDKLoginKit declares FBSDKCoreKit with ~> instead of =).
 # Returns [version, compat_map] or [nil, compat_map].
 def find_best_compatible_version(target_pod, current_version, candidates, dependent_pods)
   if dependent_pods.empty?
@@ -311,12 +315,13 @@ def find_best_compatible_version(target_pod, current_version, candidates, depend
   end
 
   map = build_supported_versions_map(target_pod, dependent_pods, current_version)
-  if map.empty?
-    return [candidates.last, map] # no public deps to constrain
+  constraining = map.reject { |_dep, sdk_to_adapter| sdk_to_adapter.empty? }
+  if constraining.empty?
+    return [candidates.last, map] # no public deps with exact pins to constrain
   end
 
   candidates.sort_by { |v| Gem::Version.new(v) }.reverse_each do |v|
-    if map.all? { |_dep, sdk_to_adapter| sdk_to_adapter.key?(v) }
+    if constraining.all? { |_dep, sdk_to_adapter| sdk_to_adapter.key?(v) }
       return [v, map]
     end
   end
@@ -357,6 +362,22 @@ end
 def exact_version?(s)
   return false if s.nil? || s.empty?
   !!(s =~ /^\d+(\.\d+)*$/)
+end
+
+# Find sibling subspecs of +pod+ pinned to an exact version in the Podfile.
+# For "Firebase/Core" returns the other "Firebase/*" entries (e.g. "Firebase/Analytics",
+# "Firebase/RemoteConfig"). All Firebase subspecs must share the same version, so when
+# bumping Firebase/Core we must bump the siblings too — otherwise `pod update` cannot
+# resolve a single Firebase version that satisfies all pins.
+def find_sibling_subspecs(pod, podfile_entries)
+  return [] unless pod.include?('/')
+  root = pod.split('/').first
+  podfile_entries
+    .select { |e| e[:name] != pod }
+    .select { |e| e[:name].start_with?("#{root}/") }
+    .select { |e| exact_version?(e[:version]) }
+    .map    { |e| e[:name] }
+    .uniq
 end
 
 # --- Trunk API ---
@@ -580,13 +601,23 @@ def main
 
   return if exact.empty?
 
+  processed_pods = []
+
   exact.each do |e|
     pod = e[:name]
     cur = e[:version]
+    next if processed_pods.include?(pod)
     all = trunk_versions_for(pod)
     cur_v = Gem::Version.new(cur)
     newer = all.select { |v| Gem::Version.new(v) > cur_v }
     next if newer.empty?
+
+    # Sibling subspecs of the same root (e.g. Firebase/Analytics for Firebase/Core)
+    # must move in lockstep — we'll bump them in Podfile and pass them to pod update.
+    siblings = find_sibling_subspecs(pod, entries)
+    if siblings.any?
+      puts "\n>> Sibling subspecs for #{pod}: #{siblings.join(', ')} (will be bumped together)"
+    end
 
     # Find dependent pods and the best version compatible with all adapters
     dependent = find_dependent_pods('Podfile.lock', pod, cur)
@@ -610,15 +641,19 @@ def main
       puts "\n=============================="
       puts "Processing SDK #{pod} #{cur} -> #{to_v}"
       puts "=============================="
-      branch = "#{BRANCH_PREFIX}#{pod}-#{to_v}"
+      # When siblings travel together, name the branch after the root pod
+      # so we don't create N branches for the same effective change.
+      branch_pod = siblings.any? ? pod.split('/').first : pod
+      branch = "#{BRANCH_PREFIX}#{branch_pod}-#{to_v}"
       sh!("git fetch origin #{default_branch}")
       sh!("git checkout -B #{branch} origin/#{default_branch}")
       replace_pod_version_in_podfile(pod, to_v)
+      siblings.each { |sib| replace_pod_version_in_podfile(sib, to_v) }
       # Update version pins for dependent pods that have exact pins in Podfile
       update_dependent_versions_in_podfile(compat_map, to_v) if compat_map.any?
       pod_bin = ENV['POD_BIN'] || 'pod'
-      # Include dependent pods in update so they resolve together
-      update_pods = ([pod] + dependent).uniq
+      # Include sibling subspecs and dependent pods in update so they resolve together
+      update_pods = ([pod] + siblings + dependent).uniq
       if dependent.any?
         puts ">> Also updating dependent pods: #{dependent.join(', ')}"
       end
@@ -630,7 +665,8 @@ def main
       end
       sh!("git add Podfile Podfile.lock")
       system("git add #{ADAPTERS_DIR}/*/CHANGELOG.md 2>/dev/null")
-      msg = "#{COMMIT_PREFIX} #{pod} #{cur} -> #{to_v}"
+      msg_pod = siblings.any? ? pod.split('/').first : pod
+      msg = "#{COMMIT_PREFIX} #{msg_pod} #{cur} -> #{to_v}"
       sh!(%{git commit -m "#{msg}"})
       git_push_branch(branch)
       begin
@@ -644,6 +680,9 @@ def main
       end
       git_reset_to_default
     end
+
+    processed_pods << pod
+    siblings.each { |sib| processed_pods << sib }
   end
 end
 
