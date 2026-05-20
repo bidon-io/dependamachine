@@ -558,6 +558,21 @@ end
 
 # --- PR creation ---
 
+def open_pr_exists_for_branch?(branch)
+  owner, repo = repo_slug.split('/', 2)
+  uri = URI("https://api.github.com/repos/#{owner}/#{repo}/pulls?head=#{owner}%3A#{branch}&base=#{default_branch}&state=open")
+  Net::HTTP.start(uri.host, uri.port, use_ssl: true) do |http|
+    req = Net::HTTP::Get.new(uri)
+    req['Authorization'] = "Bearer #{api_token}"
+    req['Accept'] = 'application/vnd.github+json'
+    resp = http.request(req)
+    return false unless resp.is_a?(Net::HTTPSuccess)
+    arr = JSON.parse(resp.body)
+    return arr.is_a?(Array) && !arr.empty?
+  end
+  false
+end
+
 def create_pr(branch, title, body, labels: PR_LABELS)
   owner, repo = repo_slug.split('/', 2)
   uri = URI("https://api.github.com/repos/#{owner}/#{repo}/pulls")
@@ -722,6 +737,16 @@ def main
       # so we don't create N branches for the same effective change.
       branch_pod = siblings.any? ? pod.split('/').first : pod
       branch = "#{BRANCH_PREFIX}#{branch_pod}-#{to_v}"
+      # Skip if an open PR already targets this exact pod/version combo.
+      # Branch names are deterministic (`#{BRANCH_PREFIX}<pod>-<to_v>`), so an
+      # existing open PR means the bump was already applied on a previous run.
+      # Re-running `git checkout -B branch origin/<default>` + force push would
+      # wipe any follow-up commits — including Claude-authored deprecated-API
+      # / build / test fixes — and leave the PR broken.
+      if open_pr_exists_for_branch?(branch)
+        puts ">> Skipping #{pod} #{cur} -> #{to_v}: open PR for #{branch} already exists (preserves follow-up commits)"
+        next
+      end
       sh!("git fetch origin #{default_branch}")
       sh!("git checkout -B #{branch} origin/#{default_branch}")
       replace_pod_version_in_podfile(pod, to_v)
