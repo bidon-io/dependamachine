@@ -231,6 +231,68 @@ def find_dependent_pods(lock_path, target_pod, version)
   dependents
 end
 
+# Parse the Podfile.lock PODS section into a dependency graph.
+# Returns { "PodName" => ["DepName", ...], "PodName/Subspec" => [...] }
+# preserving subspec names exactly as they appear in the lockfile.
+def parse_lock_dependency_graph(lock_path)
+  graph = {}
+  return graph unless File.exist?(lock_path)
+  in_pods = false
+  current = nil
+  File.foreach(lock_path) do |line|
+    if line.start_with?("PODS:")
+      in_pods = true
+      next
+    end
+    break if in_pods && line.match?(/^[A-Z][A-Z ]+:/) && !line.start_with?("PODS:")
+    next unless in_pods
+
+    if line =~ /^  - "?([^\s"(]+)"?\s*\(/
+      current = Regexp.last_match(1)
+      graph[current] ||= []
+    elsif current && line =~ /^    - "?([^\s"(]+)"?/
+      dep = Regexp.last_match(1)
+      graph[current] << dep unless graph[current].include?(dep)
+    end
+  end
+  graph
+end
+
+# Collect root pod names reachable from +seed_pods+ through the Podfile.lock
+# dependency graph (excluding the seeds themselves). Used to expand the
+# `pod update` argument list so transitive dependencies (e.g. GoogleAppMeasurement
+# for Firebase/Analytics) aren't held back at their old locked versions while
+# their parents try to move forward.
+def transitive_root_dependencies(lock_path, seed_pods)
+  graph = parse_lock_dependency_graph(lock_path)
+  seed_roots = seed_pods.map { |p| p.split('/').first }.uniq
+  # visited tracks exact graph nodes (which may include subspec names) so we
+  # don't stop at the first subspec of a multi-subspec pod — different subspecs
+  # of the same root can pull in different downstream dependencies.
+  visited = seed_pods.dup
+  queue   = seed_pods.dup
+  result  = []
+  until queue.empty?
+    node = queue.shift
+    (graph[node] || []).each do |dep|
+      unless visited.include?(dep)
+        visited << dep
+        queue   << dep
+      end
+      dep_root = dep.split('/').first
+      # Also walk the root entry so deps declared only at the root level
+      # are discovered when we entered through a subspec.
+      if dep != dep_root && graph.key?(dep_root) && !visited.include?(dep_root)
+        visited << dep_root
+        queue   << dep_root
+      end
+      next if seed_roots.include?(dep_root)
+      result << dep_root unless result.include?(dep_root)
+    end
+  end
+  result
+end
+
 # --- Compatibility check via CocoaPods CDN ---
 
 # Fetch podspec JSON from the public CocoaPods CDN.
@@ -668,9 +730,18 @@ def main
       update_dependent_versions_in_podfile(compat_map, to_v) if compat_map.any?
       pod_bin = ENV['POD_BIN'] || 'pod'
       # Include sibling subspecs and dependent pods in update so they resolve together
-      update_pods = ([pod] + siblings + dependent).uniq
+      seeds = ([pod] + siblings + dependent).uniq
+      # Also unlock transitive deps from Podfile.lock — otherwise pods like
+      # GoogleAppMeasurement (a transitive dep of Firebase/Analytics that is
+      # itself a root pod in the lockfile) stay pinned to their old version
+      # and block resolution of the new parent.
+      transitive = transitive_root_dependencies('Podfile.lock', seeds) - seeds
+      update_pods = (seeds + transitive).uniq
       if dependent.any?
         puts ">> Also updating dependent pods: #{dependent.join(', ')}"
+      end
+      if transitive.any?
+        puts ">> Also unlocking transitive deps: #{transitive.join(', ')}"
       end
       sh!("#{pod_bin} update #{update_pods.join(' ')} --no-repo-update")
       # Update adapter changelogs
