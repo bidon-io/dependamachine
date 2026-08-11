@@ -254,12 +254,26 @@ def max_gate_open?(max_cfg, sdk_version)
 end
 
 # The LevelPlay adapter tag whose manifest pins +sdk_version+, or nil.
+#
+# When +ironsource_dep_url_substring+ is configured, the tag is only eligible
+# if its manifest references that IronSource package. IronSource switched
+# their adapters from Unity-Mediation-iAds-Swift-Package to
+# LevelPlay-Swift-Package mid-history; both wrap the same IronSourceSDK/LPSPM
+# targets, so mixing generations in one workspace graph fails resolution with
+# duplicate target names. The workspace's local override pins one generation —
+# adapters that moved on are ineligible until the override moves with them.
 def levelplay_tag_for(lp_cfg, sdk_version)
   repo = lp_cfg.fetch('repo')
   dep = lp_cfg.fetch('sdk_dep_url_substring')
+  generation = lp_cfg['ironsource_dep_url_substring']
   version_tags(repo).reverse_each do |tag|
-    pin = manifest_exact_pin(raw_manifest(repo, tag), dep) rescue nil
-    return tag if pin == sdk_version
+    manifest = raw_manifest(repo, tag) rescue next
+    next unless manifest_exact_pin(manifest, dep) == sdk_version
+    if generation && !manifest.include?(generation)
+      puts ">> #{repo.split('/').last} #{tag} pins the right SDK but uses a different IronSource package generation — ineligible"
+      next
+    end
+    return tag
   end
   nil
 end
@@ -669,17 +683,31 @@ def main
       sh!("git checkout -B #{branch} origin/#{default_branch}")
     end
 
-    result = process_network(name, net_cfg, deferred)
+    begin
+      result = process_network(name, net_cfg, deferred)
+    rescue => e
+      warn "!! #{name}: #{e.message} — resetting and moving on"
+      @failures = (@failures || []) << name
+      git_reset_to_default unless dry_run?
+      next
+    end
     next if result.nil?
 
     save_deferred(deferred)
 
-    if result[:pods_touched]
-      pod_bin = ENV['POD_BIN'] || 'pod'
-      sh!("#{pod_bin} install")
-    end
-    RESOLVE_SCHEMES.each do |scheme|
-      sh!("xcodebuild -resolvePackageDependencies -workspace #{WORKSPACE} -scheme #{scheme}")
+    begin
+      if result[:pods_touched]
+        pod_bin = ENV['POD_BIN'] || 'pod'
+        sh!("#{pod_bin} install")
+      end
+      RESOLVE_SCHEMES.each do |scheme|
+        sh!("xcodebuild -resolvePackageDependencies -workspace #{WORKSPACE} -scheme #{scheme}")
+      end
+    rescue => e
+      warn "!! #{name}: post-bump verification failed (#{e.message}) — resetting and moving on"
+      @failures = (@failures || []) << name
+      git_reset_to_default unless dry_run?
+      next
     end
 
     msg = "#{COMMIT_PREFIX} #{name} #{result[:from]} -> #{result[:target]}"
@@ -702,6 +730,11 @@ def main
   end
 
   restore_pass
+
+  if (@failures || []).any?
+    warn "!! Networks that failed this run: #{@failures.join(', ')}"
+    exit 1
+  end
 end
 
 # Separate pass with its own branch/PR: restore deferred dependencies whose
