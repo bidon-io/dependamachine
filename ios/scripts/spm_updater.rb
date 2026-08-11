@@ -93,6 +93,14 @@ def parse_options
 end
 
 OPTIONS = parse_options
+# Graceful no-op when the consuming branch has no config yet: the wrapper
+# workflow can land on the default branch ahead of the SPM migration itself
+# (workflows only appear in the Actions UI once they exist there), and a
+# scheduled run before the migration merges must not read as a failure.
+unless File.exist?(OPTIONS[:config])
+  warn "!! #{OPTIONS[:config]} not found — SPM updater is not configured on this branch, nothing to do"
+  exit 0
+end
 CONFIG = JSON.parse(File.read(OPTIONS[:config]))
 
 WORKSPACE       = CONFIG.fetch('workspace')
@@ -642,7 +650,14 @@ def main
 
   NETWORKS.each do |name, net_cfg|
     deferred = load_deferred
-    branch_seed = process_network_branchless_probe(name, net_cfg)
+    # A pin that does not exist on this branch yet (partially merged migration)
+    # skips the network instead of killing the whole run.
+    begin
+      branch_seed = process_network_branchless_probe(name, net_cfg)
+    rescue => e
+      warn "!! #{name}: #{e.message} — skipping"
+      next
+    end
     next unless branch_seed
     branch = "#{BRANCH_PREFIX}#{name}-#{branch_seed}"
     if open_pr_exists_for_branch?(branch)
