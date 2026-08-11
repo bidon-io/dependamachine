@@ -1,0 +1,76 @@
+name: "iOS: SPM Updater (reusable)"
+
+on:
+  workflow_call:
+    inputs:
+      config_path:
+        description: "Path to spm-updater-config.json in the calling repo"
+        required: false
+        type: string
+        default: ".github/spm-updater-config.json"
+      base_branch:
+        description: "Base branch for PRs"
+        required: false
+        type: string
+        default: "develop"
+      reviewers:
+        description: "Comma-separated reviewers (users or org/team)"
+        required: false
+        type: string
+        default: ""
+      runner_labels:
+        description: "JSON array of runner labels"
+        required: false
+        type: string
+        default: '["self-hosted", "macOS", "ARM64", "xcode-16"]'
+      ruby_path:
+        description: "Path to ruby binary"
+        required: false
+        type: string
+        default: "/opt/homebrew/opt/ruby@3.2/bin/ruby"
+    secrets:
+      APP_ID:
+        description: "GitHub App ID for token generation"
+        required: true
+      APP_PRIVATE_KEY:
+        description: "GitHub App private key"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ${{ fromJSON(inputs.runner_labels) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.base_branch }}
+
+      - name: Checkout dependamachine scripts
+        uses: actions/checkout@v4
+        with:
+          repository: bidon-io/dependamachine
+          path: .dependamachine
+          sparse-checkout: ios/scripts
+
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Run SPM updater
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PODS_UPDATER_TOKEN: ${{ steps.app-token.outputs.token }}
+          PODS_BASE_BRANCH: ${{ inputs.base_branch }}
+          PODS_REVIEWERS: ${{ inputs.reviewers }}
+          CONFIG_PATH: ${{ inputs.config_path }}
+        run: |
+          ${{ inputs.ruby_path }} .dependamachine/ios/scripts/spm_updater.rb
