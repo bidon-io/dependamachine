@@ -571,7 +571,7 @@ def process_network(name, net_cfg, deferred)
   puts "\n== #{name}: #{cur} -> #{target} (#{gate})"
   summary = ["#{name} SDK #{cur} -> #{target}"]
   apply_own_pin(net_cfg, name, cur, target)
-  update_adapter_changelog(net_cfg['adapter'], name, target) if net_cfg['adapter']
+  Array(net_cfg['adapter']).each { |a| update_adapter_changelog(a, name, target) }
 
   pods_touched = false
 
