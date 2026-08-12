@@ -722,7 +722,7 @@ def main
         #{body_lines.map { |l| "- #{l}" }.join("\n")}
 
         <!-- build-metadata
-        #{JSON.pretty_generate({ network: name, from: result[:from], to: result[:target], changes: body_lines })}
+        #{JSON.pretty_generate({ network: name, from: result[:from], to: result[:target], adapters: Array(net_cfg['adapter']), changes: body_lines })}
         -->
       MD
       git_reset_to_default
