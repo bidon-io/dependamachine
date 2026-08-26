@@ -53,6 +53,11 @@
 #         "reference": "BidMachine-SPM"               // XCRemoteSwiftPackageReference comment name
 #         // local_manifest: { "type": "local_manifest", "file": "LocalPackages/X/Package.swift" }
 #       },
+#       "extra_pins": [                               // optional; other projects in the
+#         { "type": "pbxproj",                        // workspace pinning the same package,
+#           "file": "Sandbox/Sandbox.xcodeproj/project.pbxproj",
+#           "reference": "BidMachine-SPM" }           // bumped in lockstep with "pin"
+#       ],
 #       "adapters_yml_pin_override": "MintegralAdSDK",// optional pin_overrides key to sync
 #       "max_adapter": {                              // primary gate; omit to skip the gate
 #         "repo": "https://github.com/AppLovin/AppLovin-MAX-Swift-Package-<X>",
@@ -553,6 +558,20 @@ def apply_own_pin(net_cfg, name, from_v, to_v)
     tag = tag_for_version(net_cfg.fetch('sdk_repo'), to_v, net_cfg['tag_style'])
     local_manifest_sync(pin.fetch('file'), net_cfg.fetch('sdk_repo'), tag || to_v, from_v, to_v)
   end
+
+  # Other projects in the same workspace that pin the same package. SwiftPM
+  # resolves one version per package identity across the whole workspace, so a
+  # pin left behind at the old version contradicts the one just bumped and the
+  # entire graph fails to resolve -- "root depends on 'x' 3.8.0 and root depends
+  # on 'x' 3.7.1" -- which surfaces as a post-bump verification failure rather
+  # than as anything pointing at the second file.
+  Array(net_cfg['extra_pins']).each do |extra|
+    case extra.fetch('type')
+    when 'pbxproj' then pbxproj_set_pin(extra.fetch('file'), extra.fetch('reference'), to_v)
+    else raise "Unknown extra pin type #{extra['type']}"
+    end
+  end
+
   adapters_yml_set_pin_override(net_cfg['adapters_yml_pin_override'], to_v) if net_cfg['adapters_yml_pin_override']
 end
 
