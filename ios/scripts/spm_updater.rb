@@ -61,8 +61,12 @@
 #       "adapters_yml_pin_override": "MintegralAdSDK",// optional pin_overrides key to sync
 #       "max_adapter": {                              // primary gate; omit to skip the gate
 #         "repo": "https://github.com/AppLovin/AppLovin-MAX-Swift-Package-<X>",
-#         "tag_style": "applovin_encoded"
-#       },
+#         "tag_style": "applovin_encoded",
+#         "pin": { "type": "pbxproj",                 // optional; where the workspace pins the
+#                  "file": "Sandbox/Sandbox.xcodeproj/project.pbxproj",  // adapter package, bumped
+#                  "reference": "AppLovin-MAX-Swift-Package-<X>" },      // with the SDK
+#         "extra_pins": [ ... ]                       // optional; more references pinning the
+#       },                                            // same SDK (Google + GoogleAdsManager)
 #       "levelplay_adapter": {                        // secondary gate; omit if none
 #         "repo": "https://github.com/ironsource-mobile/LevelPlay-<X>-Adapter-Swift-Package",
 #         "pin": { "type": "pbxproj", "file": "Sandbox/Sandbox.xcodeproj/project.pbxproj",
@@ -263,16 +267,26 @@ def applovin_tag_for?(tag, sdk_version)
   groups.first(want.length) == want
 end
 
-# Does the MAX mediation adapter repo have a release for +sdk_version+?
-def max_gate_open?(max_cfg, sdk_version)
-  return true if max_cfg.nil? # no gate configured
+# The newest MAX mediation adapter tag carrying +sdk_version+, or nil. Newest,
+# because a network version can have several adapter revisions (6.22.0.0 and
+# 6.22.0.1) and the project should land on the last one.
+def max_adapter_tag_for(max_cfg, sdk_version)
   repo = max_cfg.fetch('repo')
   case max_cfg['tag_style'] || 'applovin_encoded'
   when 'applovin_encoded'
-    repo_tags(repo).any? { |t| applovin_tag_for?(t, sdk_version) }
+    repo_tags(repo).select { |t| applovin_tag_for?(t, sdk_version) }
+                   .max_by { |t| decode_applovin_groups(t) }
   else
-    version_tags(repo).any? { |t| t == sdk_version || t.start_with?("#{sdk_version}.") }
+    repo_tags(repo)
+      .select { |t| v = t.sub(/^v/, ''); v == sdk_version || v.start_with?("#{sdk_version}.") }
+      .max_by { |t| Gem::Version.new(t.sub(/^v/, '')) }
   end
+end
+
+# Does the MAX mediation adapter repo have a release for +sdk_version+?
+def max_gate_open?(max_cfg, sdk_version)
+  return true if max_cfg.nil? # no gate configured
+  !max_adapter_tag_for(max_cfg, sdk_version).nil?
 end
 
 # The LevelPlay adapter tag whose manifest pins +sdk_version+, or nil.
@@ -608,6 +622,19 @@ def process_network(name, net_cfg, deferred)
   summary = ["#{name} SDK #{cur} -> #{target}"]
   apply_own_pin(net_cfg, name, cur, target)
   Array(net_cfg['adapter']).each { |a| update_adapter_changelog(a, name, target) }
+
+  # A MAX mediation adapter package pins its SDK exactly, so a project linking
+  # one has to reach the matching release in the same commit: left behind, the
+  # old adapter still demands the old SDK and resolution fails outright. The
+  # gate already proved a release exists for +target+, so the tag is present.
+  if (mx = net_cfg['max_adapter'])
+    mx_pins = [mx['pin'], *Array(mx['extra_pins'])].compact
+    unless mx_pins.empty?
+      mx_tag = max_adapter_tag_for(mx, target)
+      mx_pins.each { |pin| pbxproj_set_pin(pin.fetch('file'), pin.fetch('reference'), mx_tag) }
+      summary << "MAX adapter -> #{mx_tag}"
+    end
+  end
 
   pods_touched = false
 
