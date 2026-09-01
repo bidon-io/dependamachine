@@ -230,10 +230,10 @@ def manifest_binary_targets(manifest)
           .to_h { |name, url, checksum| [name, { url: url, checksum: checksum }] }
 end
 
-# AppLovin mediation adapter tags encode the network version in two-digit
-# groups: 905000000.0.0 -> 9.5.0.0.0, of which the last two groups are the
-# adapter's own revision — network version 9.5.0.
-def decode_applovin_tag(tag)
+# AppLovin mediation adapter tags encode a version as two-digit groups after a
+# leading group of one or two digits: 801070000.0.0 -> 8.1.7.0.0,
+# 4200000.0.0 -> 4.20.0.0, 13090000.0.0 -> 13.9.0.0.
+def decode_applovin_groups(tag)
   head = tag.split('.').first.to_s
   return nil unless head =~ /^\d+$/
   groups = []
@@ -242,8 +242,25 @@ def decode_applovin_tag(tag)
     head = head[0..-3]
   end
   groups.unshift(head.to_i)
-  return nil if groups.length < 3
-  groups[0..-3].join('.')
+  groups
+end
+
+# Does +tag+ encode an adapter release for network version +sdk_version+?
+#
+# The groups trailing the network version are the adapter's own revision, and
+# how many there are differs per network — two for Mintegral (8.1.7.0.0), one
+# for UnityAds (4.20.0.0) — so the network version cannot be recovered by
+# dropping a fixed count: doing so ate the patch group of every network on the
+# shorter form and left a version that could never equal a three-part SDK
+# version, holding those gates shut permanently. Matching on the leading groups
+# instead reads both forms, and requiring at least one group after the match
+# keeps a bare network tag from passing as an adapter release.
+def applovin_tag_for?(tag, sdk_version)
+  groups = decode_applovin_groups(tag)
+  return false if groups.nil?
+  want = sdk_version.split('.').map(&:to_i)
+  return false if want.empty? || groups.length <= want.length
+  groups.first(want.length) == want
 end
 
 # Does the MAX mediation adapter repo have a release for +sdk_version+?
@@ -252,7 +269,7 @@ def max_gate_open?(max_cfg, sdk_version)
   repo = max_cfg.fetch('repo')
   case max_cfg['tag_style'] || 'applovin_encoded'
   when 'applovin_encoded'
-    repo_tags(repo).any? { |t| decode_applovin_tag(t) == sdk_version }
+    repo_tags(repo).any? { |t| applovin_tag_for?(t, sdk_version) }
   else
     version_tags(repo).any? { |t| t == sdk_version || t.start_with?("#{sdk_version}.") }
   end
