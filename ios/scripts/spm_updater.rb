@@ -492,7 +492,13 @@ end
 
 # --- Podfile editors ---
 
-def podfile_bump_pod(pod, to_version)
+# +spec+ is either a pod name, or { "pod" =>, "suffix" => }. Same reason as
+# adapters_yml_set_pin_override: some pods carry a four-number form of the SDK
+# version (IronSourceSDK/Ads ships as "9.6.0.0") while the cascade carries the
+# plain one, and a requirement of "9.6.0" matches no published spec at all.
+def podfile_bump_pod(spec, to_version)
+  pod, suffix = spec.is_a?(Hash) ? [spec.fetch('pod'), spec['suffix'].to_s] : [spec, '']
+  to_version = "#{to_version}#{suffix}"
   src = File.read('Podfile')
   changed = false
   new_src = src.gsub(/^(\s*pod\s+["']#{Regexp.escape(pod)}["'])\s*(?:,\s*["'][^"']+["'])?/) do
@@ -728,9 +734,9 @@ def process_network(name, net_cfg, deferred)
 
   # Pods that mirror the SPM pin and must move in lockstep (a Podfile pin of
   # the same SDK kept for pod-built targets, e.g. the AdapterTests GMA pod).
-  Array(net_cfg['extra_pods']).each do |pod|
-    podfile_bump_pod(pod, target)
-    summary << "pod #{pod} -> #{target}"
+  Array(net_cfg['extra_pods']).each do |pod_spec|
+    podfile_bump_pod(pod_spec, target)
+    summary << "pod #{pod_spec.is_a?(Hash) ? pod_spec.fetch('pod') : pod_spec} -> #{target}"
     pods_touched = true
   end
 
