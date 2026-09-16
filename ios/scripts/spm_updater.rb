@@ -334,6 +334,15 @@ def pbxproj_current_pin(file, reference)
   block[/version = ([0-9.]+);/, 1]
 end
 
+# Whether a pbxproj carries a package reference at all. Lets an optional stack
+# ask before acting, instead of finding out through an exception that unwinds a
+# network's whole update.
+def pbxproj_has_package?(file, reference)
+  return false unless File.exist?(file)
+
+  File.read(file).include?(%(XCRemoteSwiftPackageReference "#{reference}"))
+end
+
 def pbxproj_set_pin(file, reference, to_version)
   src = File.read(file)
   changed = false
@@ -410,7 +419,7 @@ end
 # Sync a local override package manifest with the upstream manifest of the new
 # tag: binaryTarget urls/checksums by target name, plus the version literal in
 # the header comment and any occurrences of the old version in urls.
-def local_manifest_sync(file, sdk_repo, tag, from_version, to_version)
+def local_manifest_sync(file, sdk_repo, tag, from_version, to_version, coupled_ranges = nil)
   upstream = manifest_binary_targets(raw_manifest(sdk_repo, tag))
   src = File.read(file)
   updated = src.gsub(/\.binaryTarget\(\s*name:\s*"([^"]+)"\s*,\s*url:\s*"([^"]+)"\s*,\s*checksum:\s*"([^"]+)"/m) do
@@ -423,8 +432,55 @@ def local_manifest_sync(file, sdk_repo, tag, from_version, to_version)
     end
   end
   updated = updated.gsub(from_version, to_version)
+  updated = sync_coupled_ranges(updated, file, coupled_ranges, to_version)
   File.write(file, updated) unless dry_run?
   puts ">> #{file}: synced binary targets to #{tag}"
+end
+
+# Rewrite `.package(url: "...", "X"..<"Y")` requirements that have to track the
+# SDK version.
+#
+# These are not copied from upstream on purpose. A vendor typically declares a
+# permissive range for its own companion package -- IronSource allows any 9.x
+# Ad Quality against any 9.x LevelPlay -- while a local override narrows it to
+# the pairing that was actually resolved and tested. Copying upstream would
+# silently widen the constraint; the blanket `gsub(from_version, to_version)`
+# above would move the lower bound and leave the upper one behind, which is
+# worse: "9.6.0"..<"9.5.0" is an empty range and resolution fails outright.
+# So the window is restated from the target version instead.
+def sync_coupled_ranges(src, file, coupled_ranges, to_version)
+  Array(coupled_ranges).each do |rng|
+    substr = rng.fetch('url_substring')
+    upper = case rng.fetch('style')
+            when 'minor_window' then next_minor(to_version)
+            when 'major_window' then next_major(to_version)
+            else raise "Unknown coupled range style #{rng['style']}"
+            end
+
+    pattern = /(\.package\(\s*url:\s*"[^"]*#{Regexp.escape(substr)}[^"]*"\s*,\s*)"[^"]+"(\s*\.\.<\s*)"[^"]+"/
+    matched = false
+    src = src.gsub(pattern) do
+      matched = true
+      %(#{Regexp.last_match(1)}"#{to_version}"#{Regexp.last_match(2)}"#{upper}")
+    end
+
+    if matched
+      puts ">> #{file}: #{substr} range -> \"#{to_version}\"..<\"#{upper}\""
+    else
+      warn "!! #{file}: no version range found for #{substr} — leaving it alone"
+    end
+  end
+  src
+end
+
+def next_minor(version)
+  parts = version.split('.').map(&:to_i)
+  parts[1] = parts.fetch(1, 0) + 1
+  "#{parts[0]}.#{parts[1]}.0"
+end
+
+def next_major(version)
+  "#{version.split('.').first.to_i + 1}.0.0"
 end
 
 def local_manifest_current_pin(file)
@@ -482,7 +538,13 @@ end
 
 # --- adapters.yml pin_overrides sync ---
 
-def adapters_yml_set_pin_override(key, to_version)
+# +spec+ is either a key name, or { "key" =>, "suffix" => }. The suffix exists
+# because some pin_overrides carry the mds four-number form -- IronSourceSDK is
+# stored as "9.6.0.0", the SDK version plus an adapter revision -- while the
+# value the cascade carries around is the plain SDK version.
+def adapters_yml_set_pin_override(spec, to_version)
+  key, suffix = spec.is_a?(Hash) ? [spec.fetch('key'), spec['suffix'].to_s] : [spec, '']
+  to_version = "#{to_version}#{suffix}"
   src = File.read(ADAPTERS_YML)
   changed = false
   new_src = src.gsub(/^(\s*#{Regexp.escape(key)}:\s*")[^"]+(")$/) do
@@ -587,7 +649,8 @@ def apply_own_pin(net_cfg, name, from_v, to_v)
     pbxproj_set_pin(pin.fetch('file'), pin.fetch('reference'), to_v)
   when 'local_manifest'
     tag = tag_for_version(net_cfg.fetch('sdk_repo'), to_v, net_cfg['tag_style'])
-    local_manifest_sync(pin.fetch('file'), net_cfg.fetch('sdk_repo'), tag || to_v, from_v, to_v)
+    local_manifest_sync(pin.fetch('file'), net_cfg.fetch('sdk_repo'), tag || to_v, from_v, to_v,
+                        pin['coupled_ranges'])
   end
 
   # Other projects in the same workspace that pin the same package. SwiftPM
@@ -639,13 +702,25 @@ def process_network(name, net_cfg, deferred)
   pods_touched = false
 
   if (lp = net_cfg['levelplay_adapter'])
+    lp_file = lp.fetch('pin').fetch('file')
+    lp_ref = lp.fetch('pin').fetch('reference')
     lp_tag = levelplay_tag_for(lp, target)
-    if lp_tag
-      pbxproj_set_pin(lp.fetch('pin').fetch('file'), lp.fetch('pin').fetch('reference'), lp_tag)
+    if !pbxproj_has_package?(lp_file, lp_ref)
+      # The LevelPlay stack is optional: a network can be mediated through MAX
+      # only, and some adapters are deliberately kept out of the project (every
+      # tag of MAX's own IronSource adapter still depends on the pre-rename
+      # package name). Treating that as an error used to unwind the network's
+      # whole update -- a correct SDK bump, its adapters.yml override and its
+      # MAX pin were all rolled back because a pin that was never there could
+      # not be found.
+      warn "!! #{name}: #{lp_ref} is not in #{lp_file} — skipping the LevelPlay stack"
+      summary << 'LevelPlay adapter not in project (skipped)'
+    elsif lp_tag
+      pbxproj_set_pin(lp_file, lp_ref, lp_tag)
       summary << "LevelPlay adapter -> #{lp_tag}"
     else
-      pbxproj_remove_package(lp.fetch('pin').fetch('file'), lp.fetch('pin').fetch('reference'))
-      defer!(deferred, network: name, stack: 'levelplay', dependency: lp.fetch('pin').fetch('reference'),
+      pbxproj_remove_package(lp_file, lp_ref)
+      defer!(deferred, network: name, stack: 'levelplay', dependency: lp_ref,
              waiting_for: target, note: 'No LevelPlay adapter tag pinning this SDK version yet')
       summary << 'LevelPlay adapter removed (deferred)'
     end
