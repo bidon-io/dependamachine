@@ -51,6 +51,15 @@ jobs:
     secrets: inherit
 ```
 
+### Adapter revision on SDK bumps
+
+Both updaters reset the adapter revision whenever they bump a network SDK:
+`adapterVersion: String = "N"` (matched by `adapter_version_regex`, in any
+Swift file of the adapter, commented-out lines excluded) goes back to `"0"`
+when N is not already 0, and the adapter changelog heading is written as
+`<sdk version>.0`. The revision counts adapter releases against one SDK
+version, so a new SDK version starts it again.
+
 ### Config File
 
 Each project maintains `.github/pods-updater-config.json`:
