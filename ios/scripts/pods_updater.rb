@@ -490,6 +490,34 @@ end
 
 # --- Adapter changelog ---
 
+# The adapter revision -- `adapterVersion` in the adapter source, the fourth
+# component of its release version -- counts adapter releases against one
+# network SDK version. A new SDK version starts that count again, so a bump
+# puts every non-zero revision back to 0 (SDK 1.2.3 adapter 1.2.3.2 -> SDK
+# 1.2.4 adapter 1.2.4.0). Any Swift file in the adapter is searched: Bidon
+# keeps it in *DemandSourceAdapter.swift, Appodeal in *Network.swift or
+# *Service.swift. Commented-out declarations are left alone. Returns the
+# paths it rewrote, so the caller can stage exactly those.
+def reset_adapter_revision(adapter_name)
+  re = Regexp.new(ADAPTER_VERSION_REGEX)
+  Dir.glob(File.join(ADAPTERS_DIR, adapter_name, '**', '*.swift')).sort.select do |path|
+    changed = false
+    new_src = File.read(path).lines.map do |line|
+      m = line.match(re)
+      next line if m.nil? || m[1] == '0' || line.lstrip.start_with?('//')
+      changed = true
+      "#{line[0...m.begin(1)]}0#{line[m.end(1)..]}"
+    end.join
+    next false unless changed
+    File.write(path, new_src)
+    puts ">> #{path}: adapterVersion reset to 0"
+    true
+  end
+rescue => e
+  warn "Failed to reset adapterVersion for #{adapter_name}: #{e}"
+  []
+end
+
 def update_adapter_changelog(adapter_name, pod_name, sdk_version_hint)
   return unless ADAPTER_CHANGELOG
 
@@ -769,13 +797,17 @@ def main
         puts ">> Also unlocking transitive deps: #{transitive.join(', ')}"
       end
       sh!("#{pod_bin} update #{update_pods.join(' ')} --no-repo-update")
-      # Update adapter changelogs
+      # Reset adapter revisions, then update adapter changelogs -- in that order,
+      # so the changelog heading carries the reset revision.
       adapter_key = pod.split('/').first
+      reset_sources = []
       (POD_TO_ADAPTER[adapter_key] || POD_TO_ADAPTER[pod] || []).each do |adapter_name|
+        reset_sources.concat(reset_adapter_revision(adapter_name))
         update_adapter_changelog(adapter_name, pod, to_v)
       end
       sh!("git add Podfile Podfile.lock")
       system("git add #{ADAPTERS_DIR}/*/CHANGELOG.md 2>/dev/null")
+      reset_sources.each { |path| sh!(%(git add "#{path}")) }
       msg_pod = siblings.any? ? pod.split('/').first : pod
       msg = "#{COMMIT_PREFIX} #{msg_pod} #{cur} -> #{to_v}"
       sh!(%{git commit -m "#{msg}"})

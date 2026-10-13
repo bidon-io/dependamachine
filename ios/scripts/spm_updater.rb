@@ -120,6 +120,7 @@ ADAPTERS_YML    = CONFIG['adapters_yml'] || 'fastlane/adapters.yml'
 DEFERRED_PATH   = CONFIG['deferred_path'] || '.github/spm-deferred.json'
 RESOLVE_SCHEMES = CONFIG['resolve_schemes'] || []
 ADAPTERS_DIR    = CONFIG['adapters_dir'] || 'Adapters'
+ADAPTER_VERSION_REGEX = CONFIG['adapter_version_regex'] || 'adapterVersion\s*:\s*String\s*=\s*"(\d+)"'
 NETWORKS        = CONFIG.fetch('networks')
 
 def default_branch
@@ -585,6 +586,36 @@ end
 
 # --- Adapter changelog (same format the pods updater writes) ---
 
+# The adapter revision -- `adapterVersion` in the adapter source, the fourth
+# component of its release version -- counts adapter releases against one
+# network SDK version. A new SDK version starts that count again, so a bump
+# puts every non-zero revision back to 0 (SDK 1.2.3 adapter 1.2.3.2 -> SDK
+# 1.2.4 adapter 1.2.4.0). Any Swift file in the adapter is searched: Bidon
+# keeps it in *DemandSourceAdapter.swift, Appodeal in *Network.swift or
+# *Service.swift. Commented-out declarations are left alone. Returns the
+# paths it rewrote, for the log.
+def reset_adapter_revision(adapter_name)
+  re = Regexp.new(ADAPTER_VERSION_REGEX)
+  Dir.glob(File.join(ADAPTERS_DIR, adapter_name, '**', '*.swift')).sort.select do |path|
+    changed = false
+    new_src = File.read(path).lines.map do |line|
+      m = line.match(re)
+      next line if m.nil? || m[1] == '0' || line.lstrip.start_with?('//')
+      changed = true
+      "#{line[0...m.begin(1)]}0#{line[m.end(1)..]}"
+    end.join
+    next false unless changed
+    File.write(path, new_src) unless dry_run?
+    puts ">> #{path}: adapterVersion reset to 0"
+    true
+  end
+rescue => e
+  warn "Failed to reset adapterVersion for #{adapter_name}: #{e}"
+  []
+end
+
+# The heading is the adapter release version: the SDK version plus the
+# revision, which reset_adapter_revision has just put back to 0.
 def update_adapter_changelog(adapter_name, network, to_version)
   path = File.join(ADAPTERS_DIR, adapter_name, 'CHANGELOG.md')
   return unless File.exist?(path)
@@ -593,7 +624,7 @@ def update_adapter_changelog(adapter_name, network, to_version)
   return if content.include?(marker)
   lines = content.lines
   idx = lines.index { |l| l.start_with?('# Changelog') } || 0
-  lines.insert(idx + 1, "\n## #{to_version}\n#{marker}\n")
+  lines.insert(idx + 1, "\n## #{to_version}.0\n#{marker}\n")
   File.write(path, lines.join) unless dry_run?
 end
 
@@ -690,7 +721,10 @@ def process_network(name, net_cfg, deferred)
   puts "\n== #{name}: #{cur} -> #{target} (#{gate})"
   summary = ["#{name} SDK #{cur} -> #{target}"]
   apply_own_pin(net_cfg, name, cur, target)
-  Array(net_cfg['adapter']).each { |a| update_adapter_changelog(a, name, target) }
+  Array(net_cfg['adapter']).each do |a|
+    reset_adapter_revision(a)
+    update_adapter_changelog(a, name, target)
+  end
 
   # A MAX mediation adapter package pins its SDK exactly, so a project linking
   # one has to reach the matching release in the same commit: left behind, the
